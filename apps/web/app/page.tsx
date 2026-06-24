@@ -1,10 +1,15 @@
-import Chat from "./chat";
+import React from 'react';
+import Chat from './chat';
 
-export default function Home() {
-  return (
-    <main className="min-vh-100 d-flex flex-column align-items-center justify-content-center bg-body-tertiary p-3">
-      <h1 className="h3 mb-4 text-center">CHATBOT SWPS</h1>
-      <Chat />
-    </main>
-  );
+export default function HomePage() {
+    return (
+        <main className="container py-5">
+            <div className="text-center mb-5">
+                <h1 className="display-4 fw-bold text-dark">Projekt Zaliczeniowy SWPS</h1>
+                <p className="lead text-muted">Interdyscyplinarny projekt łączący Psychologię i Informatykę</p>
+                <hr className="my-4 mx-auto" style={{ maxWidth: '200px', borderTop: '3px solid #0d6efd' }} />
+            </div>
+            <Chat />
+        </main>
+    );
 }
