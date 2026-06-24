@@ -4,6 +4,10 @@ import os
 
 import anthropic
 
+import os
+import anthropic
+from app.repository import search_as_text
+
 from app.knowledge import MAIN_KNOWLEDGE
 from app.repository import search_as_text
 
@@ -12,6 +16,94 @@ MAX_TOKENS = 2048
 # Zabezpieczenie przed nieskończoną pętlą wywołań narzędzia.
 MAX_TOOL_ITERS = 4
 
+
+# Inicjalizacja klienta Anthropic
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+_INSTRUCTIONS_BASE = """Jesteś inteligentnym, pomocnym asystentem akademickim ze specyfikacją SWPS.
+Rozmawiasz ze studentami psychologii i informatyki. Twoje wypowiedzi powinny być merytoryczne i napisane poprawną polszczyzną.
+W swojej pracy opierasz się na dostarczonym kontekście bazy wiedzy stałej.
+Jeśli użytkownik pyta o konkretne badania, książki, publikacje pracowników SWPS lub szuka literatury naukowej, MUSISZ użyć narzędzia `szukaj_w_repozytorium`."""
+
+_TOOLS = [
+    {
+        "name": "szukaj_w_repozytorium",
+        "description": "Przeszukuje oficjalne Repozytorium Naukowe Uniwersytetu SWPS w celu znalezienia książek, artykułów naukowych, abstraktów i publikacji.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "zapytanie": {
+                    "type": "string",
+                    "description": "Słowa kluczowe do wyszukania, np. 'psychologia pozytywna', 'Jan Strelau', 'sztuczna inteligencja'"
+                }
+            },
+            "required": ["zapytanie"]
+        }
+    }
+]
+
+def _read_general_knowledge():
+    try:
+        path = os.path.join(os.path.dirname(__file__), '..', 'knowledge', 'general.md')
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return "Podstawowa baza wiedzy jest niedostępna."
+
+def generate_response(user_message: str, history: list) -> str:
+    knowledge = _read_general_knowledge()
+    system_prompt = f"{_INSTRUCTIONS_BASE}\n\n=== STAŁA BAZA WIEDZY ===\n{knowledge}"
+
+    # Formatowanie historii wiadomości do formatu akceptowanego przez Anthropic API
+    messages = []
+    for msg in history:
+        messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": user_message})
+
+    # Pierwsze wywołanie modelu Claude
+    response = client.messages.create(
+        model="claude-3-5-sonnet-20241022", # Używamy aktualnego, stabilnego i szybkiego modelu Sonnet
+        max_tokens=2000,
+        system=system_prompt,
+        messages=messages,
+        tools=_TOOLS
+    )
+
+    # Pętla Tool-Use (sprawdzamy czy bot chce skorzystać z zewnętrznej bazy RAG)
+    if response.stop_reason == "tool_use":
+        tool_use = next(block for block in response.content if block.type == "tool_use")
+        tool_name = tool_use.name
+        tool_input = tool_use.input
+        tool_id = tool_use.id
+
+        if tool_name == "szukaj_w_repozytorium":
+            # Wykonanie wyszukiwania w DSpace SWPS
+            repo_result = search_as_text(tool_input.get("zapytanie"))
+            
+            # Dodanie akcji wywołania narzędzia oraz wyniku do historii wątku
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": repo_result
+                    }
+                ]
+            })
+
+            # Drugie wywołanie modelu - generowanie ostatecznej odpowiedzi na podstawie RAG
+            final_response = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=2000,
+                system=system_prompt,
+                messages=messages,
+                tools=_TOOLS
+            )
+            return final_response.content[0].text
+
+    return response.content[0].text
 
 def _env_flag(name: str, default: bool = True) -> bool:
     """Czyta flagę typu prawda/fałsz ze zmiennej środowiskowej."""
